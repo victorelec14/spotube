@@ -157,8 +157,12 @@ class UserPreferencesNotifier extends Notifier<PreferencesTableData> {
     await setData(PreferencesTableCompanion(pipedInstance: Value(instance)));
   }
 
-  Future<void> setSearchMode(SearchMode mode) async {
-    await setData(PreferencesTableCompanion(searchMode: Value(mode)));
+  void setInvidiousInstance(String instance) {
+    setData(PreferencesTableCompanion(invidiousInstance: Value(instance)));
+  }
+
+  void setSearchMode(SearchMode mode) {
+    setData(PreferencesTableCompanion(searchMode: Value(mode)));
   }
 
   Future<void> setSkipNonMusic(bool skip) async {
