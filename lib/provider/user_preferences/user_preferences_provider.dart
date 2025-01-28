@@ -11,6 +11,7 @@ import 'package:spotube/provider/audio_player/audio_player_streams.dart';
 import 'package:spotube/provider/database/database.dart';
 import 'package:spotube/provider/palette_provider.dart';
 import 'package:spotube/services/audio_player/audio_player.dart';
+import 'package:spotube/services/isolates/yt_explode.dart';
 import 'package:spotube/services/logger/logger.dart';
 import 'package:spotube/services/sourced_track/enums.dart';
 import 'package:spotube/utils/platform.dart';
@@ -39,6 +40,10 @@ class UserPreferencesNotifier extends Notifier<PreferencesTableData> {
       state = await (db.select(db.preferencesTable)
             ..where((tbl) => tbl.id.equals(0)))
           .getSingle();
+
+      if (state.audioSource == AudioSource.youtube) {
+        await IsolatedYoutubeExplode.initialize();
+      }
 
       final subscription = (db.select(db.preferencesTable)
             ..where((tbl) => tbl.id.equals(0)))
@@ -207,6 +212,10 @@ class UserPreferencesNotifier extends Notifier<PreferencesTableData> {
 
   void setAudioSource(AudioSource type) {
     setData(PreferencesTableCompanion(audioSource: Value(type)));
+
+    if (type != AudioSource.youtube && IsolatedYoutubeExplode.isInitialized) {
+      IsolatedYoutubeExplode.instance.dispose();
+    }
   }
 
   void setSystemTitleBar(bool isSystemTitleBar) {

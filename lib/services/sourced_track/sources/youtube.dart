@@ -1,10 +1,10 @@
 import 'package:collection/collection.dart';
 import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:http/http.dart';
 import 'package:spotify/spotify.dart';
 import 'package:spotube/models/database/database.dart';
 import 'package:spotube/provider/database/database.dart';
+import 'package:spotube/services/isolates/yt_explode.dart';
 import 'package:spotube/services/logger/logger.dart';
 import 'package:spotube/services/song_link/song_link.dart';
 import 'package:spotube/services/sourced_track/enums.dart';
@@ -16,7 +16,6 @@ import 'package:spotube/services/sourced_track/sourced_track.dart';
 import 'package:spotube/utils/service_utils.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
-final youtubeClient = YoutubeExplode();
 final officialMusicRegex = RegExp(
   r"official\s(video|audio|music\svideo|lyric\svideo|visualizer)",
   caseSensitive: false,
@@ -48,6 +47,9 @@ class YoutubeSourcedTrack extends SourcedTrack {
     required Track track,
     required Ref ref,
   }) async {
+    if (!IsolatedYoutubeExplode.isInitialized) {
+      await IsolatedYoutubeExplode.initialize();
+    }
     final database = ref.read(databaseProvider);
     final cachedSource = await (database.select(database.sourceMatchTable)
           ..where((s) => s.trackId.equals(track.id!))
@@ -81,18 +83,10 @@ class YoutubeSourcedTrack extends SourcedTrack {
         track: track,
       );
     }
-    final item = await youtubeClient.videos.get(cachedSource.sourceId);
-    final manifest = await youtubeClient.videos.streamsClient.getManifest(
-      cachedSource.sourceId,
-      requireWatchPage: false,
-      ytClients: [
-        YoutubeApiClient.mediaConnect,
-        YoutubeApiClient.ios,
-        YoutubeApiClient.android,
-        YoutubeApiClient.mweb,
-        YoutubeApiClient.tv,
-      ],
-    );
+    final item =
+        await IsolatedYoutubeExplode.instance.video(cachedSource.sourceId);
+    final manifest =
+        await IsolatedYoutubeExplode.instance.manifest(cachedSource.sourceId);
     return YoutubeSourcedTrack(
       ref: ref,
       siblings: [],
@@ -144,17 +138,7 @@ class YoutubeSourcedTrack extends SourcedTrack {
   ) async {
     SourceMap? sourceMap;
     if (index == 0) {
-      final manifest = await youtubeClient.videos.streamsClient.getManifest(
-        item.id,
-        requireWatchPage: false,
-        ytClients: [
-          YoutubeApiClient.mediaConnect,
-          YoutubeApiClient.ios,
-          YoutubeApiClient.android,
-          YoutubeApiClient.mweb,
-          YoutubeApiClient.tv,
-        ],
-      );
+      final manifest = await IsolatedYoutubeExplode.instance.manifest(item.id);
       sourceMap = toSourceMap(manifest);
     }
 
@@ -248,7 +232,7 @@ class YoutubeSourcedTrack extends SourcedTrack {
           await toSiblingType(
             0,
             YoutubeVideoInfo.fromVideo(
-              await youtubeClient.videos.get(ytLink!.url!),
+              await IsolatedYoutubeExplode.instance.video(ytLink!.url!),
             ),
           )
         ];
@@ -260,10 +244,8 @@ class YoutubeSourcedTrack extends SourcedTrack {
 
     final query = SourcedTrack.getSearchTerm(track);
 
-    final searchResults = await youtubeClient.search.search(
-      "$query - Topic",
-      filter: TypeFilters.video,
-    );
+    final searchResults =
+        await IsolatedYoutubeExplode.instance.search("$query - Topic");
 
     if (ServiceUtils.onlyContainsEnglish(query)) {
       return await Future.wait(searchResults
@@ -294,12 +276,8 @@ class YoutubeSourcedTrack extends SourcedTrack {
     final newSiblings = siblings.where((s) => s.id != sibling.id).toList()
       ..insert(0, sourceInfo);
 
-    final manifest = await youtubeClient.videos.streamsClient
-        .getManifest(newSourceInfo.id)
-        .timeout(
-          const Duration(seconds: 5),
-          onTimeout: () => throw ClientException("Timeout"),
-        );
+    final manifest =
+        await IsolatedYoutubeExplode.instance.manifest(newSourceInfo.id);
 
     final database = ref.read(databaseProvider);
 

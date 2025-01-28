@@ -18,6 +18,7 @@ import 'package:spotube/provider/audio_player/audio_player.dart';
 import 'package:spotube/provider/audio_player/querying_track_info.dart';
 import 'package:spotube/provider/server/active_sourced_track.dart';
 import 'package:spotube/provider/user_preferences/user_preferences_provider.dart';
+import 'package:spotube/services/isolates/yt_explode.dart';
 import 'package:spotube/services/sourced_track/models/source_info.dart';
 import 'package:spotube/services/sourced_track/models/video_info.dart';
 import 'package:spotube/services/sourced_track/sourced_track.dart';
@@ -114,7 +115,8 @@ class SiblingTracksSheet extends HookConsumerWidget {
             activeSourceInfo,
           );
       } else {
-        final resultsYt = await youtubeClient.search.search(searchTerm.trim());
+        final resultsYt =
+            await IsolatedYoutubeExplode.instance.search(searchTerm.trim());
 
         final searchResults = await Future.wait(
           resultsYt
