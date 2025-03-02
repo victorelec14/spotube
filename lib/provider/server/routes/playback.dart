@@ -46,6 +46,27 @@ class ServerPlaybackRoutes {
 
   ServerPlaybackRoutes(this.ref) : dio = Dio();
 
+  /// proxy hls playlist file
+  Future<Response> proxyHls(String url, Map<String, dynamic> headers) async {
+    try {
+      final response = await dio.get(
+        url,
+        options: Options(responseType: ResponseType.bytes),
+      );
+
+      return Response.ok(
+        response.data as Uint8List,
+        headers: {
+          "content-type": "audio/mpegurl",
+          "content-length": (response.data as Uint8List).length.toString(),
+        },
+      );
+    } catch (e, stack) {
+      AppLogger.reportError(e, stack);
+      return Response.internalServerError();
+    }
+  }
+
   Future<({dio_lib.Response<Uint8List> response, Uint8List? bytes})>
       streamTrack(
     SourcedTrack track,
@@ -201,8 +222,12 @@ class ServerPlaybackRoutes {
 
       ref.read(activeSourcedTrackProvider.notifier).update(sourcedTrack);
 
+      if (sourcedTrack!.url.contains(".m3u8")) {
+        return await proxyHls(sourcedTrack.url, request.headers);
+      }
+
       final (bytes: audioBytes, response: res) =
-          await streamTrack(sourcedTrack!, request.headers);
+          await streamTrack(sourcedTrack, request.headers);
 
       return Response(
         res.statusCode!,

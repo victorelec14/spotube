@@ -15,7 +15,8 @@ enum AudioSource {
   youtube,
   piped,
   jiosaavn,
-  invidious;
+  invidious,
+  soundcloud;
 
   String get label => name[0].toUpperCase() + name.substring(1);
 }

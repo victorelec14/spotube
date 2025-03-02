@@ -9,6 +9,7 @@ import 'package:spotube/services/sourced_track/models/source_map.dart';
 import 'package:spotube/services/sourced_track/sources/invidious.dart';
 import 'package:spotube/services/sourced_track/sources/jiosaavn.dart';
 import 'package:spotube/services/sourced_track/sources/piped.dart';
+import 'package:spotube/services/sourced_track/sources/soundcloud.dart';
 import 'package:spotube/services/sourced_track/sources/youtube.dart';
 import 'package:spotube/utils/service_utils.dart';
 
@@ -86,6 +87,13 @@ abstract class SourcedTrack extends Track {
           sourceInfo: sourceInfo,
           track: track,
         ),
+      AudioSource.soundcloud => SoundcloudSourcedTrack(
+          ref: ref,
+          source: source,
+          siblings: siblings,
+          sourceInfo: sourceInfo,
+          track: track,
+        )
     };
   }
 
@@ -116,6 +124,8 @@ abstract class SourcedTrack extends Track {
         await InvidiousSourcedTrack.fetchFromTrack(track: track, ref: ref),
       AudioSource.jiosaavn =>
         await JioSaavnSourcedTrack.fetchFromTrack(track: track, ref: ref),
+      AudioSource.soundcloud =>
+        await SoundcloudSourcedTrack.fetchFromTrack(track: track, ref: ref),
     };
   }
 
@@ -134,6 +144,8 @@ abstract class SourcedTrack extends Track {
         JioSaavnSourcedTrack.fetchSiblings(track: track, ref: ref),
       AudioSource.invidious =>
         InvidiousSourcedTrack.fetchSiblings(track: track, ref: ref),
+      AudioSource.soundcloud =>
+        SoundcloudSourcedTrack.fetchSiblings(track: track, ref: ref),
     };
   }
 

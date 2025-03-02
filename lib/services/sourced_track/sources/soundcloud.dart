@@ -4,30 +4,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotify/spotify.dart';
 import 'package:spotube/models/database/database.dart';
 import 'package:spotube/provider/database/database.dart';
-import 'package:spotube/provider/user_preferences/user_preferences_provider.dart';
 import 'package:spotube/services/logger/logger.dart';
 import 'package:spotube/services/song_link/song_link.dart';
 import 'package:spotube/services/sourced_track/enums.dart';
 import 'package:spotube/services/sourced_track/exceptions.dart';
 import 'package:spotube/services/sourced_track/models/source_info.dart';
 import 'package:spotube/services/sourced_track/models/source_map.dart';
-import 'package:spotube/services/sourced_track/models/video_info.dart';
 import 'package:spotube/services/sourced_track/sourced_track.dart';
-import 'package:invidious/invidious.dart';
-import 'package:spotube/services/sourced_track/sources/youtube.dart';
-import 'package:spotube/utils/service_utils.dart';
+import 'package:soundcloud_explode_dart/soundcloud_explode_dart.dart'
+    as soundcloud;
 
-final invidiousProvider = Provider<InvidiousClient>(
+final soundcloudProvider = Provider<soundcloud.SoundcloudClient>(
   (ref) {
-    final invidiousInstance = ref.watch(
-      userPreferencesProvider.select((s) => s.invidiousInstance),
-    );
-    return InvidiousClient(server: invidiousInstance);
+    return soundcloud.SoundcloudClient();
   },
 );
 
-class InvidiousSourceInfo extends SourceInfo {
-  InvidiousSourceInfo({
+class SoundcloudSourceInfo extends SourceInfo {
+  SoundcloudSourceInfo({
     required super.id,
     required super.title,
     required super.artist,
@@ -39,8 +33,8 @@ class InvidiousSourceInfo extends SourceInfo {
   });
 }
 
-class InvidiousSourcedTrack extends SourcedTrack {
-  InvidiousSourcedTrack({
+class SoundcloudSourcedTrack extends SourcedTrack {
+  SoundcloudSourcedTrack({
     required super.ref,
     required super.source,
     required super.siblings,
@@ -53,13 +47,13 @@ class InvidiousSourcedTrack extends SourcedTrack {
     required Ref ref,
   }) async {
     // Indicates a stream url refresh
-    if (track is InvidiousSourcedTrack) {
+    if (track is SoundcloudSourcedTrack) {
       final manifest = await ref
-          .read(invidiousProvider)
-          .videos
-          .get(track.sourceInfo.id, local: true);
+          .read(soundcloudProvider)
+          .tracks
+          .getStreams(int.parse(track.sourceInfo.id));
 
-      return InvidiousSourcedTrack(
+      return SoundcloudSourcedTrack(
         ref: ref,
         siblings: track.siblings,
         source: toSourceMap(manifest),
@@ -77,9 +71,10 @@ class InvidiousSourcedTrack extends SourcedTrack {
                 OrderingTerm(expression: s.createdAt, mode: OrderingMode.desc),
           ]))
         .getSingleOrNull();
-    final invidiousClient = ref.read(invidiousProvider);
+    final soundcloudClient = ref.read(soundcloudProvider);
 
-    if (cachedSource == null) {
+    if (cachedSource == null ||
+        cachedSource.sourceType != SourceType.soundcloud) {
       final siblings = await fetchSiblings(ref: ref, track: track);
       if (siblings.isEmpty) {
         throw TrackNotFoundError(track);
@@ -89,11 +84,11 @@ class InvidiousSourcedTrack extends SourcedTrack {
             SourceMatchTableCompanion.insert(
               trackId: track.id!,
               sourceId: siblings.first.info.id,
-              sourceType: const Value(SourceType.youtube),
+              sourceType: const Value(SourceType.soundcloud),
             ),
           );
 
-      return InvidiousSourcedTrack(
+      return SoundcloudSourcedTrack(
         ref: ref,
         siblings: siblings.map((s) => s.info).skip(1).toList(),
         source: siblings.first.source as SourceMap,
@@ -101,21 +96,25 @@ class InvidiousSourcedTrack extends SourcedTrack {
         track: track,
       );
     } else {
-      final manifest =
-          await invidiousClient.videos.get(cachedSource.sourceId, local: true);
+      final details = await soundcloudClient.tracks.get(
+        int.parse(cachedSource.sourceId),
+      );
+      final streams = await soundcloudClient.tracks.getStreams(
+        int.parse(cachedSource.sourceId),
+      );
 
-      return InvidiousSourcedTrack(
+      return SoundcloudSourcedTrack(
         ref: ref,
         siblings: [],
-        source: toSourceMap(manifest),
-        sourceInfo: InvidiousSourceInfo(
-          id: manifest.videoId,
-          artist: manifest.author,
-          artistUrl: manifest.authorUrl,
-          pageUrl: "https://www.youtube.com/watch?v=${manifest.videoId}",
-          thumbnail: manifest.videoThumbnails.first.url,
-          title: manifest.title,
-          duration: Duration(seconds: manifest.lengthSeconds),
+        source: toSourceMap(streams),
+        sourceInfo: SoundcloudSourceInfo(
+          id: details.id.toString(),
+          artist: details.user.username,
+          artistUrl: details.user.permalinkUrl.toString(),
+          pageUrl: details.permalinkUrl.toString(),
+          thumbnail: details.artworkUrl.toString(),
+          title: details.title,
+          duration: Duration(seconds: details.duration.toInt()),
           album: null,
         ),
         track: track,
@@ -123,14 +122,18 @@ class InvidiousSourcedTrack extends SourcedTrack {
     }
   }
 
-  static SourceMap toSourceMap(InvidiousVideoResponse manifest) {
-    final m4a = manifest.adaptiveFormats
-        .where((audio) => audio.type.contains("audio/mp4"))
-        .sorted((a, b) => int.parse(a.bitrate).compareTo(int.parse(b.bitrate)));
+  static SourceMap toSourceMap(List<soundcloud.StreamInfo> manifest) {
+    final m4a = manifest
+        .where((audio) => audio.container == soundcloud.Container.mp3)
+        .sorted((a, b) {
+      return a.quality == soundcloud.Quality.highQuality ? 1 : -1;
+    });
 
-    final weba = manifest.adaptiveFormats
-        .where((audio) => audio.type.contains("audio/webm"))
-        .sorted((a, b) => int.parse(a.bitrate).compareTo(int.parse(b.bitrate)));
+    final weba = manifest
+        .where((audio) => audio.container == soundcloud.Container.ogg)
+        .sorted((a, b) {
+      return a.quality == soundcloud.Quality.highQuality ? 1 : -1;
+    });
 
     return SourceMap(
       m4a: SourceQualityMap(
@@ -138,35 +141,38 @@ class InvidiousSourcedTrack extends SourcedTrack {
         medium: (m4a.elementAtOrNull(m4a.length ~/ 2) ?? m4a[1]).url.toString(),
         low: m4a.last.url.toString(),
       ),
-      weba: SourceQualityMap(
-        high: weba.first.url.toString(),
-        medium:
-            (weba.elementAtOrNull(weba.length ~/ 2) ?? weba[1]).url.toString(),
-        low: weba.last.url.toString(),
-      ),
+      weba: weba.isNotEmpty
+          ? SourceQualityMap(
+              high: weba.first.url.toString(),
+              medium: (weba.elementAtOrNull(weba.length ~/ 2) ?? weba[1])
+                  .url
+                  .toString(),
+              low: weba.last.url.toString(),
+            )
+          : null,
     );
   }
 
   static Future<SiblingType> toSiblingType(
     int index,
-    YoutubeVideoInfo item,
-    InvidiousClient invidiousClient,
+    soundcloud.Track item,
+    soundcloud.SoundcloudClient soundcloudClient,
   ) async {
     SourceMap? sourceMap;
     if (index == 0) {
-      final manifest = await invidiousClient.videos.get(item.id, local: true);
+      final manifest = await soundcloudClient.tracks.getStreams(item.id);
       sourceMap = toSourceMap(manifest);
     }
 
     final SiblingType sibling = (
-      info: InvidiousSourceInfo(
-        id: item.id,
-        artist: item.channelName,
-        artistUrl: "https://www.youtube.com/${item.channelId}",
-        pageUrl: "https://www.youtube.com/watch?v=${item.id}",
-        thumbnail: item.thumbnailUrl,
+      info: SoundcloudSourceInfo(
+        id: item.id.toString(),
+        artist: item.user.username,
+        artistUrl: item.user.permalinkUrl.toString(),
+        pageUrl: item.permalinkUrl.toString(),
+        thumbnail: item.artworkUrl.toString(),
         title: item.title,
-        duration: item.duration,
+        duration: Duration(seconds: item.duration.toInt()),
         album: null,
       ),
       source: sourceMap,
@@ -179,23 +185,22 @@ class InvidiousSourcedTrack extends SourcedTrack {
     required Track track,
     required Ref ref,
   }) async {
-    final invidiousClient = ref.read(invidiousProvider);
-    final preference = ref.read(userPreferencesProvider);
+    final soundcloudClient = ref.read(soundcloudProvider);
 
     final links = await SongLinkService.links(track.id!);
-    final ytLink = links.firstWhereOrNull((link) => link.platform == "youtube");
+    final soundcloudLink =
+        links.firstWhereOrNull((link) => link.platform == "soundcloud");
 
-    if (ytLink != null && track is! SourcedTrack) {
+    if (soundcloudLink != null && track is! SourcedTrack) {
       try {
-        final videoId = Uri.parse(ytLink.url!).queryParameters["v"]!;
-
-        final manifest = await invidiousClient.videos.get(videoId, local: true);
+        final details =
+            await soundcloudClient.tracks.getByUrl(soundcloudLink.url!);
 
         return [
           await toSiblingType(
             0,
-            YoutubeVideoInfo.fromVideoResponse(manifest, preference.searchMode),
-            invidiousClient,
+            details,
+            soundcloudClient,
           )
         ];
       } catch (e, stack) {
@@ -205,40 +210,46 @@ class InvidiousSourcedTrack extends SourcedTrack {
 
     final query = SourcedTrack.getSearchTerm(track);
 
-    final searchResults = await invidiousClient.search.list(
-      query,
-      type: InvidiousSearchType.video,
-    );
-
-    if (ServiceUtils.onlyContainsEnglish(query)) {
-      return await Future.wait(
-        searchResults
-            .whereType<InvidiousSearchResponseVideo>()
-            .map(
-              (result) => YoutubeVideoInfo.fromSearchResponse(
-                result,
-                preference.searchMode,
-              ),
-            )
-            .mapIndexed((i, r) => toSiblingType(i, r, invidiousClient)),
-      );
-    }
-
-    final rankedSiblings = YoutubeSourcedTrack.rankResults(
-      searchResults
-          .whereType<InvidiousSearchResponseVideo>()
-          .map(
-            (result) => YoutubeVideoInfo.fromSearchResponse(
-              result,
-              preference.searchMode,
-            ),
-          )
-          .toList(),
-      track,
-    );
+    final searchResults = await soundcloudClient.search
+        .getTracks(query, offset: 0, limit: 10)
+        .toList()
+        .then((value) => value.expand((e) => e).toList());
 
     return await Future.wait(
-      rankedSiblings.mapIndexed((i, r) => toSiblingType(i, r, invidiousClient)),
+      searchResults.mapIndexed(
+        (i, r) => toSiblingType(
+          i,
+          soundcloud.Track(
+            id: r.id,
+            title: r.title,
+            duration: r.duration,
+            user: r.user,
+            artworkUrl: r.artworkUrl,
+            permalinkUrl: r.permalinkUrl,
+            caption: r.caption,
+            commentCount: r.commentCount,
+            createdAt: r.createdAt,
+            description: r.description,
+            downloadCount: r.downloadCount,
+            genre: r.genre,
+            commentable: r.commentable,
+            fullDuration: r.fullDuration,
+            labelName: r.labelName,
+            lastModified: r.lastModified,
+            license: r.license,
+            likesCount: r.likesCount,
+            monetizationModel: r.monetizationModel,
+            playbackCount: r.playbackCount,
+            policy: r.policy,
+            purchaseTitle: r.purchaseTitle,
+            purchaseUrl: r.purchaseUrl,
+            repostsCount: r.repostsCount,
+            tagList: r.tagList,
+            waveformUrl: r.waveformUrl,
+          ),
+          soundcloudClient,
+        ),
+      ),
     );
   }
 
@@ -249,7 +260,7 @@ class InvidiousSourcedTrack extends SourcedTrack {
     }
     final fetchedSiblings = await fetchSiblings(ref: ref, track: this);
 
-    return InvidiousSourcedTrack(
+    return SoundcloudSourcedTrack(
       ref: ref,
       siblings: fetchedSiblings
           .where((s) => s.info.id != sourceInfo.id)
@@ -276,17 +287,18 @@ class InvidiousSourcedTrack extends SourcedTrack {
     final newSiblings = siblings.where((s) => s.id != sibling.id).toList()
       ..insert(0, sourceInfo);
 
-    final pipedClient = ref.read(invidiousProvider);
+    final soundcloudClient = ref.read(soundcloudProvider);
 
-    final manifest =
-        await pipedClient.videos.get(newSourceInfo.id, local: true);
+    final manifest = await soundcloudClient.tracks.getStreams(
+      int.parse(newSourceInfo.id),
+    );
 
     final database = ref.read(databaseProvider);
     await database.into(database.sourceMatchTable).insert(
           SourceMatchTableCompanion.insert(
             trackId: id!,
             sourceId: newSourceInfo.id,
-            sourceType: const Value(SourceType.youtube),
+            sourceType: const Value(SourceType.soundcloud),
             // Because we're sorting by createdAt in the query
             // we have to update it to indicate priority
             createdAt: Value(DateTime.now()),
@@ -294,7 +306,7 @@ class InvidiousSourcedTrack extends SourcedTrack {
           mode: InsertMode.replace,
         );
 
-    return InvidiousSourcedTrack(
+    return SoundcloudSourcedTrack(
       ref: ref,
       siblings: newSiblings,
       source: toSourceMap(manifest),
